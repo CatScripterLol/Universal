@@ -1,0 +1,158 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local pg = player:WaitForChild("PlayerGui")
+
+if pg:FindFirstChild("MobileShiftLock") then
+	pg.MobileShiftLock:Destroy()
+end
+
+local locked = false
+local rotateConn
+local charConn
+local diedConn
+
+local OFFSET_ON = Vector3.new(1.75, 0.5, 0)
+local OFFSET_OFF = Vector3.new(0, 0, 0)
+
+local function getHum()
+	local char = player.Character
+	if not char then return nil, nil end
+	return char:FindFirstChildOfClass("Humanoid"), char:FindFirstChild("HumanoidRootPart")
+end
+
+local function stopRotate()
+	if rotateConn then
+		rotateConn:Disconnect()
+		rotateConn = nil
+	end
+end
+
+local function applyOffset(hum, on)
+	if not hum then return end
+	pcall(function()
+		hum.CameraOffset = on and OFFSET_ON or OFFSET_OFF
+		hum.AutoRotate = not on
+	end)
+end
+
+local function setLocked(on)
+	locked = on
+	stopRotate()
+	local hum, hrp = getHum()
+	applyOffset(hum, on)
+	if not on then return end
+	rotateConn = RunService.RenderStepped:Connect(function()
+		local h, root = getHum()
+		if not h or not root or h.Health <= 0 then return end
+		local cam = workspace.CurrentCamera
+		if not cam then return end
+		local look = cam.CFrame.LookVector
+		local flat = Vector3.new(look.X, 0, look.Z)
+		if flat.Magnitude < 0.05 then return end
+		flat = flat.Unit
+		root.CFrame = CFrame.new(root.Position, root.Position + flat)
+	end)
+end
+
+local function bindCharacter(char)
+	if diedConn then
+		diedConn:Disconnect()
+		diedConn = nil
+	end
+	local hum = char:WaitForChild("Humanoid", 8)
+	if not hum then return end
+	diedConn = hum.Died:Connect(function()
+		stopRotate()
+		pcall(function()
+			hum.CameraOffset = OFFSET_OFF
+			hum.AutoRotate = true
+		end)
+	end)
+	if locked then
+		task.wait(0.15)
+		setLocked(true)
+	end
+end
+
+if player.Character then
+	task.spawn(bindCharacter, player.Character)
+end
+charConn = player.CharacterAdded:Connect(bindCharacter)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "MobileShiftLock"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = pg
+
+local btn = Instance.new("ImageButton")
+btn.Name = "ShiftLockBtn"
+btn.Size = UDim2.new(0, 56, 0, 56)
+btn.Position = UDim2.new(1, -72, 0.55, 0)
+btn.AnchorPoint = Vector2.new(0, 0.5)
+btn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+btn.BackgroundTransparency = 0.25
+btn.AutoButtonColor = true
+btn.Image = ""
+btn.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = btn
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(90, 90, 100)
+stroke.Thickness = 1.5
+stroke.Parent = btn
+
+local icon = Instance.new("TextLabel")
+icon.Size = UDim2.new(1, 0, 1, 0)
+icon.BackgroundTransparency = 1
+icon.Text = "🔒"
+icon.TextScaled = true
+icon.Font = Enum.Font.GothamBold
+icon.TextColor3 = Color3.fromRGB(200, 200, 210)
+icon.Parent = btn
+
+local pad = Instance.new("UIPadding")
+pad.PaddingTop = UDim.new(0, 10)
+pad.PaddingBottom = UDim.new(0, 10)
+pad.PaddingLeft = UDim.new(0, 10)
+pad.PaddingRight = UDim.new(0, 10)
+pad.Parent = icon
+
+local function refreshBtn()
+	if locked then
+		icon.Text = "🔓"
+		icon.TextColor3 = Color3.fromRGB(80, 220, 120)
+		stroke.Color = Color3.fromRGB(60, 180, 100)
+		btn.BackgroundColor3 = Color3.fromRGB(25, 45, 35)
+	else
+		icon.Text = "🔒"
+		icon.TextColor3 = Color3.fromRGB(200, 200, 210)
+		stroke.Color = Color3.fromRGB(90, 90, 100)
+		btn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+	end
+end
+
+btn.MouseButton1Click:Connect(function()
+	setLocked(not locked)
+	refreshBtn()
+end)
+
+if UserInputService.KeyboardEnabled then
+	UserInputService.InputBegan:Connect(function(input, gp)
+		if gp then return end
+		if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then
+			setLocked(not locked)
+			refreshBtn()
+		end
+	end)
+end
+
+refreshBtn()
