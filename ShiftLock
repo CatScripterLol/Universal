@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local pg = player:WaitForChild("PlayerGui")
@@ -12,7 +11,6 @@ end
 
 local locked = false
 local rotateConn
-local charConn
 local diedConn
 
 local OFFSET_ON = Vector3.new(1.75, 0.5, 0)
@@ -31,6 +29,69 @@ local function stopRotate()
 	end
 end
 
+local gui = Instance.new("ScreenGui")
+gui.Name = "MobileShiftLock"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = pg
+
+local btn = Instance.new("ImageButton")
+btn.Name = "ShiftLockBtn"
+btn.Size = UDim2.new(0, 52, 0, 52)
+btn.Position = UDim2.new(1, -16, 1, -16)
+btn.AnchorPoint = Vector2.new(1, 1)
+btn.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+btn.BackgroundTransparency = 0.2
+btn.AutoButtonColor = true
+btn.Image = ""
+btn.Parent = gui
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(1, 0)
+btnCorner.Parent = btn
+
+local btnStroke = Instance.new("UIStroke")
+btnStroke.Color = Color3.fromRGB(100, 100, 110)
+btnStroke.Thickness = 1.5
+btnStroke.Parent = btn
+
+local icon = Instance.new("TextLabel")
+icon.Size = UDim2.new(1, 0, 1, 0)
+icon.BackgroundTransparency = 1
+icon.Text = "🔒"
+icon.TextScaled = true
+icon.Font = Enum.Font.GothamBold
+icon.TextColor3 = Color3.fromRGB(210, 210, 220)
+icon.Parent = btn
+
+local iconPad = Instance.new("UIPadding")
+iconPad.PaddingTop = UDim.new(0, 10)
+iconPad.PaddingBottom = UDim.new(0, 10)
+iconPad.PaddingLeft = UDim.new(0, 10)
+iconPad.PaddingRight = UDim.new(0, 10)
+iconPad.Parent = icon
+
+local crosshair = Instance.new("Frame")
+crosshair.Name = "Crosshair"
+crosshair.Size = UDim2.new(0, 6, 0, 6)
+crosshair.Position = UDim2.new(0.5, 0, 0.5, 0)
+crosshair.AnchorPoint = Vector2.new(0.5, 0.5)
+crosshair.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+crosshair.BorderSizePixel = 0
+crosshair.Visible = false
+crosshair.ZIndex = 100
+crosshair.Parent = gui
+
+local crossCorner = Instance.new("UICorner")
+crossCorner.CornerRadius = UDim.new(1, 0)
+crossCorner.Parent = crosshair
+
+local crossStroke = Instance.new("UIStroke")
+crossStroke.Color = Color3.fromRGB(0, 0, 0)
+crossStroke.Thickness = 1.2
+crossStroke.Parent = crosshair
+
 local function applyOffset(hum, on)
 	if not hum then return end
 	pcall(function()
@@ -42,9 +103,18 @@ end
 local function setLocked(on)
 	locked = on
 	stopRotate()
-	local hum, hrp = getHum()
+	crosshair.Visible = on
+	local hum = getHum()
 	applyOffset(hum, on)
-	if not on then return end
+	if not on then
+		pcall(function()
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		end)
+		return
+	end
+	pcall(function()
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	end)
 	rotateConn = RunService.RenderStepped:Connect(function()
 		local h, root = getHum()
 		if not h or not root or h.Health <= 0 then return end
@@ -54,8 +124,23 @@ local function setLocked(on)
 		local flat = Vector3.new(look.X, 0, look.Z)
 		if flat.Magnitude < 0.05 then return end
 		flat = flat.Unit
-		root.CFrame = CFrame.new(root.Position, root.Position + flat)
+		local pos = root.Position
+		root.CFrame = CFrame.lookAt(pos, pos + flat)
 	end)
+end
+
+local function refreshBtn()
+	if locked then
+		icon.Text = "🔓"
+		icon.TextColor3 = Color3.fromRGB(90, 230, 130)
+		btnStroke.Color = Color3.fromRGB(60, 180, 100)
+		btn.BackgroundColor3 = Color3.fromRGB(22, 42, 32)
+	else
+		icon.Text = "🔒"
+		icon.TextColor3 = Color3.fromRGB(210, 210, 220)
+		btnStroke.Color = Color3.fromRGB(100, 100, 110)
+		btn.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+	end
 end
 
 local function bindCharacter(char)
@@ -67,78 +152,24 @@ local function bindCharacter(char)
 	if not hum then return end
 	diedConn = hum.Died:Connect(function()
 		stopRotate()
+		crosshair.Visible = false
 		pcall(function()
 			hum.CameraOffset = OFFSET_OFF
 			hum.AutoRotate = true
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 		end)
 	end)
 	if locked then
-		task.wait(0.15)
+		task.wait(0.2)
 		setLocked(true)
+		refreshBtn()
 	end
 end
 
 if player.Character then
 	task.spawn(bindCharacter, player.Character)
 end
-charConn = player.CharacterAdded:Connect(bindCharacter)
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "MobileShiftLock"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.Parent = pg
-
-local btn = Instance.new("ImageButton")
-btn.Name = "ShiftLockBtn"
-btn.Size = UDim2.new(0, 56, 0, 56)
-btn.Position = UDim2.new(1, -72, 0.55, 0)
-btn.AnchorPoint = Vector2.new(0, 0.5)
-btn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-btn.BackgroundTransparency = 0.25
-btn.AutoButtonColor = true
-btn.Image = ""
-btn.Parent = gui
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 12)
-corner.Parent = btn
-
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(90, 90, 100)
-stroke.Thickness = 1.5
-stroke.Parent = btn
-
-local icon = Instance.new("TextLabel")
-icon.Size = UDim2.new(1, 0, 1, 0)
-icon.BackgroundTransparency = 1
-icon.Text = "🔒"
-icon.TextScaled = true
-icon.Font = Enum.Font.GothamBold
-icon.TextColor3 = Color3.fromRGB(200, 200, 210)
-icon.Parent = btn
-
-local pad = Instance.new("UIPadding")
-pad.PaddingTop = UDim.new(0, 10)
-pad.PaddingBottom = UDim.new(0, 10)
-pad.PaddingLeft = UDim.new(0, 10)
-pad.PaddingRight = UDim.new(0, 10)
-pad.Parent = icon
-
-local function refreshBtn()
-	if locked then
-		icon.Text = "🔓"
-		icon.TextColor3 = Color3.fromRGB(80, 220, 120)
-		stroke.Color = Color3.fromRGB(60, 180, 100)
-		btn.BackgroundColor3 = Color3.fromRGB(25, 45, 35)
-	else
-		icon.Text = "🔒"
-		icon.TextColor3 = Color3.fromRGB(200, 200, 210)
-		stroke.Color = Color3.fromRGB(90, 90, 100)
-		btn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-	end
-end
+player.CharacterAdded:Connect(bindCharacter)
 
 btn.MouseButton1Click:Connect(function()
 	setLocked(not locked)
