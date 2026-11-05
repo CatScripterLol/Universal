@@ -1,52 +1,102 @@
 -- this cript only works in client side!!
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
-local removedPlayers = {}
-local removedChars = {}
-local selectedPlayer = nil
+local hidden = {} -- [UserId] = {player = Player, name = string, display = string, char = Model?}
+local selectedId = nil
+local currentTab = "Players"
 
-local function getCharacter(player)
-	return player and player.Character
+local function getPlayerById(id)
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.UserId == id then return p end
+	end
+	for _, data in pairs(hidden) do
+		if data.player and data.player.UserId == id then return data.player end
+	end
+	return nil
 end
 
-local function hideCharacter(player)
-	local char = getCharacter(player)
-	if char and char.Parent then
-		removedChars[player] = char
+local function forceHideChar(char)
+	if not char then return end
+	pcall(function()
+		char.Parent = nil
+	end)
+	for _, part in ipairs(char:GetDescendants()) do
+		if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("Texture") then
+			pcall(function()
+				part.LocalTransparencyModifier = 1
+				part.Transparency = 1
+			end)
+		end
+		if part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
+			pcall(function() part.Enabled = false end)
+		end
+	end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
 		pcall(function()
-			char.Parent = nil
+			hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+			hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
 		end)
 	end
 end
 
-local function showCharacter(player)
-	local char = removedChars[player]
-	if char then
+local function forceShowChar(char)
+	if not char then return end
+	pcall(function()
+		char.Parent = workspace
+	end)
+	for _, part in ipairs(char:GetDescendants()) do
+		if part:IsA("BasePart") then
+			pcall(function()
+				part.LocalTransparencyModifier = 0
+			end)
+		end
+		if part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
+			pcall(function() part.Enabled = true end)
+		end
+	end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
 		pcall(function()
-			char.Parent = workspace
+			hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+			hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.DisplayWhenDamaged
 		end)
-		removedChars[player] = nil
 	end
 end
 
 local function removePlayer(player)
 	if not player or player == LocalPlayer then return end
-	removedPlayers[player] = true
-	hideCharacter(player)
-	pcall(function()
-		player.Parent = nil
-	end)
+	local id = player.UserId
+	local char = player.Character
+	hidden[id] = {
+		player = player,
+		name = player.Name,
+		display = player.DisplayName,
+		char = char
+	}
+	pcall(function() player.Parent = nil end)
+	forceHideChar(char)
+	if selectedId == id and currentTab == "Players" then
+		selectedId = nil
+	end
 end
 
-local function restorePlayer(player)
-	if not player then return end
+local function restorePlayer(id)
+	local data = hidden[id]
+	if not data then return end
+	local player = data.player
 	pcall(function()
-		player.Parent = Players
+		if player then player.Parent = Players end
 	end)
-	showCharacter(player)
-	removedPlayers[player] = nil
+	local char = data.char or (player and player.Character)
+	forceShowChar(char)
+	hidden[id] = nil
+	if selectedId == id and currentTab == "Hidden" then
+		selectedId = nil
+	end
 end
 
 local function removeAll()
@@ -58,19 +108,42 @@ local function removeAll()
 end
 
 local function restoreAll()
-	for player in pairs(removedPlayers) do
-		restorePlayer(player)
+	local ids = {}
+	for id in pairs(hidden) do
+		table.insert(ids, id)
 	end
-	table.clear(removedPlayers)
-	table.clear(removedChars)
+	for _, id in ipairs(ids) do
+		restorePlayer(id)
+	end
 end
+
+-- keep forcing hide every frame so engine can't bring them back
+RunService.Heartbeat:Connect(function()
+	for id, data in pairs(hidden) do
+		local player = data.player
+		if player then
+			if player.Parent ~= nil then
+				pcall(function() player.Parent = nil end)
+			end
+			local char = player.Character or data.char
+			if char then
+				data.char = char
+				if char.Parent ~= nil then
+					forceHideChar(char)
+				end
+			end
+		end
+	end
+end)
 
 Players.PlayerAdded:Connect(function(player)
 	if player == LocalPlayer then return end
 	player.CharacterAdded:Connect(function(char)
-		if removedPlayers[player] then
-			task.wait()
-			hideCharacter(player)
+		if hidden[player.UserId] then
+			task.defer(function()
+				hidden[player.UserId].char = char
+				forceHideChar(char)
+			end)
 		end
 	end)
 end)
@@ -78,14 +151,17 @@ end)
 for _, player in ipairs(Players:GetPlayers()) do
 	if player ~= LocalPlayer then
 		player.CharacterAdded:Connect(function(char)
-			if removedPlayers[player] then
-				task.wait()
-				hideCharacter(player)
+			if hidden[player.UserId] then
+				task.defer(function()
+					hidden[player.UserId].char = char
+					forceHideChar(char)
+				end)
 			end
 		end)
 	end
 end
 
+-- UI
 local gui = Instance.new("ScreenGui")
 gui.Name = "PlayerRemover"
 gui.ResetOnSpawn = false
@@ -94,9 +170,9 @@ gui.Parent = game:GetService("CoreGui")
 
 local main = Instance.new("Frame")
 main.Name = "Main"
-main.Size = UDim2.new(0, 280, 0, 340)
-main.Position = UDim2.new(0.5, -140, 0.5, -170)
-main.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+main.Size = UDim2.new(0, 300, 0, 420)
+main.Position = UDim2.new(0.5, -150, 0.5, -210)
+main.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
 main.BorderSizePixel = 0
 main.Active = true
 main.Parent = gui
@@ -106,14 +182,14 @@ mainCorner.CornerRadius = UDim.new(0, 10)
 mainCorner.Parent = main
 
 local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = Color3.fromRGB(60, 60, 70)
+mainStroke.Color = Color3.fromRGB(55, 55, 65)
 mainStroke.Thickness = 1.5
 mainStroke.Parent = main
 
 local titleBar = Instance.new("Frame")
 titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, 0, 0, 36)
-titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+titleBar.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
 titleBar.BorderSizePixel = 0
 titleBar.Parent = main
 
@@ -124,7 +200,7 @@ titleCorner.Parent = titleBar
 local titleFix = Instance.new("Frame")
 titleFix.Size = UDim2.new(1, 0, 0, 12)
 titleFix.Position = UDim2.new(0, 0, 1, -12)
-titleFix.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+titleFix.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
 titleFix.BorderSizePixel = 0
 titleFix.Parent = titleBar
 
@@ -142,7 +218,7 @@ title.Parent = titleBar
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 28, 0, 28)
 closeBtn.Position = UDim2.new(1, -32, 0, 4)
-closeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
+closeBtn.BackgroundColor3 = Color3.fromRGB(48, 48, 56)
 closeBtn.Text = "X"
 closeBtn.TextColor3 = Color3.fromRGB(220, 80, 80)
 closeBtn.Font = Enum.Font.GothamBold
@@ -159,7 +235,6 @@ closeBtn.MouseButton1Click:Connect(function()
 end)
 
 local dragging, dragStart, startPos
-
 titleBar.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging = true
@@ -167,13 +242,11 @@ titleBar.InputBegan:Connect(function(input)
 		startPos = main.Position
 	end
 end)
-
 titleBar.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging = false
 	end
 end)
-
 UserInputService.InputChanged:Connect(function(input)
 	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 		local delta = input.Position - dragStart
@@ -181,14 +254,49 @@ UserInputService.InputChanged:Connect(function(input)
 	end
 end)
 
+-- Tabs
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, -20, 0, 32)
+tabBar.Position = UDim2.new(0, 10, 0, 44)
+tabBar.BackgroundTransparency = 1
+tabBar.Parent = main
+
+local playersTabBtn = Instance.new("TextButton")
+playersTabBtn.Size = UDim2.new(0.5, -4, 1, 0)
+playersTabBtn.Position = UDim2.new(0, 0, 0, 0)
+playersTabBtn.BackgroundColor3 = Color3.fromRGB(55, 90, 160)
+playersTabBtn.Text = "Players"
+playersTabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+playersTabBtn.Font = Enum.Font.GothamBold
+playersTabBtn.TextSize = 13
+playersTabBtn.Parent = tabBar
+
+local playersTabCorner = Instance.new("UICorner")
+playersTabCorner.CornerRadius = UDim.new(0, 6)
+playersTabCorner.Parent = playersTabBtn
+
+local hiddenTabBtn = Instance.new("TextButton")
+hiddenTabBtn.Size = UDim2.new(0.5, -4, 1, 0)
+hiddenTabBtn.Position = UDim2.new(0.5, 4, 0, 0)
+hiddenTabBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+hiddenTabBtn.Text = "Hidden (0)"
+hiddenTabBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+hiddenTabBtn.Font = Enum.Font.GothamBold
+hiddenTabBtn.TextSize = 13
+hiddenTabBtn.Parent = tabBar
+
+local hiddenTabCorner = Instance.new("UICorner")
+hiddenTabCorner.CornerRadius = UDim.new(0, 6)
+hiddenTabCorner.Parent = hiddenTabBtn
+
 local listFrame = Instance.new("ScrollingFrame")
-listFrame.Name = "PlayerList"
-listFrame.Size = UDim2.new(1, -20, 0, 180)
-listFrame.Position = UDim2.new(0, 10, 0, 48)
-listFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+listFrame.Name = "List"
+listFrame.Size = UDim2.new(1, -20, 0, 200)
+listFrame.Position = UDim2.new(0, 10, 0, 84)
+listFrame.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
 listFrame.BorderSizePixel = 0
 listFrame.ScrollBarThickness = 4
-listFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 90)
+listFrame.ScrollBarImageColor3 = Color3.fromRGB(70, 70, 80)
 listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 listFrame.Parent = main
 
@@ -207,54 +315,118 @@ listPad.PaddingLeft = UDim.new(0, 6)
 listPad.PaddingRight = UDim.new(0, 6)
 listPad.Parent = listFrame
 
-local playerButtons = {}
+local listButtons = {}
 
-local function updateList()
-	for _, btn in pairs(playerButtons) do
+local function clearList()
+	for _, btn in pairs(listButtons) do
 		btn:Destroy()
 	end
-	table.clear(playerButtons)
+	table.clear(listButtons)
+end
 
+local function countHidden()
+	local n = 0
+	for _ in pairs(hidden) do n = n + 1 end
+	return n
+end
+
+local function updateList()
+	clearList()
 	local y = 0
-	for _, player in ipairs(Players:GetPlayers()) do
-		if player == LocalPlayer then continue end
 
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(1, -4, 0, 32)
-		btn.BackgroundColor3 = (selectedPlayer == player) and Color3.fromRGB(55, 90, 160) or Color3.fromRGB(32, 32, 38)
-		btn.Text = player.DisplayName .. " (@" .. player.Name .. ")"
-		btn.TextColor3 = Color3.fromRGB(220, 220, 230)
-		btn.Font = Enum.Font.Gotham
-		btn.TextSize = 13
-		btn.TextXAlignment = Enum.TextXAlignment.Left
-		btn.Parent = listFrame
+	if currentTab == "Players" then
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player == LocalPlayer then continue end
+			if hidden[player.UserId] then continue end
 
-		local btnCorner = Instance.new("UICorner")
-		btnCorner.CornerRadius = UDim.new(0, 6)
-		btnCorner.Parent = btn
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, -4, 0, 32)
+			btn.BackgroundColor3 = (selectedId == player.UserId) and Color3.fromRGB(55, 90, 160) or Color3.fromRGB(30, 30, 36)
+			btn.Text = player.DisplayName .. " (@" .. player.Name .. ")"
+			btn.TextColor3 = Color3.fromRGB(220, 220, 230)
+			btn.Font = Enum.Font.Gotham
+			btn.TextSize = 13
+			btn.TextXAlignment = Enum.TextXAlignment.Left
+			btn.Parent = listFrame
 
-		local btnPad = Instance.new("UIPadding")
-		btnPad.PaddingLeft = UDim.new(0, 8)
-		btnPad.Parent = btn
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = btn
 
-		btn.MouseButton1Click:Connect(function()
-			selectedPlayer = player
-			updateList()
-		end)
+			local p = Instance.new("UIPadding")
+			p.PaddingLeft = UDim.new(0, 8)
+			p.Parent = btn
 
-		playerButtons[player] = btn
-		y = y + 36
+			local id = player.UserId
+			btn.MouseButton1Click:Connect(function()
+				selectedId = id
+				updateList()
+			end)
+
+			listButtons[id] = btn
+			y = y + 36
+		end
+	else
+		for id, data in pairs(hidden) do
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, -4, 0, 32)
+			btn.BackgroundColor3 = (selectedId == id) and Color3.fromRGB(55, 90, 160) or Color3.fromRGB(30, 30, 36)
+			btn.Text = data.display .. " (@" .. data.name .. ")"
+			btn.TextColor3 = Color3.fromRGB(220, 220, 230)
+			btn.Font = Enum.Font.Gotham
+			btn.TextSize = 13
+			btn.TextXAlignment = Enum.TextXAlignment.Left
+			btn.Parent = listFrame
+
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = btn
+
+			local p = Instance.new("UIPadding")
+			p.PaddingLeft = UDim.new(0, 8)
+			p.Parent = btn
+
+			btn.MouseButton1Click:Connect(function()
+				selectedId = id
+				updateList()
+			end)
+
+			listButtons[id] = btn
+			y = y + 36
+		end
 	end
 
 	listFrame.CanvasSize = UDim2.new(0, 0, 0, y + 8)
+	hiddenTabBtn.Text = "Hidden (" .. countHidden() .. ")"
 end
 
+local function setTab(tab)
+	currentTab = tab
+	selectedId = nil
+	if tab == "Players" then
+		playersTabBtn.BackgroundColor3 = Color3.fromRGB(55, 90, 160)
+		playersTabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		hiddenTabBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+		hiddenTabBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+	else
+		hiddenTabBtn.BackgroundColor3 = Color3.fromRGB(55, 90, 160)
+		hiddenTabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		playersTabBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+		playersTabBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+	end
+	updateList()
+end
+
+playersTabBtn.MouseButton1Click:Connect(function() setTab("Players") end)
+hiddenTabBtn.MouseButton1Click:Connect(function() setTab("Hidden") end)
+
 Players.PlayerAdded:Connect(function()
-	task.wait(0.1)
+	task.wait(0.15)
 	updateList()
 end)
 Players.PlayerRemoving:Connect(function(player)
-	if selectedPlayer == player then selectedPlayer = nil end
+	hidden[player.UserId] = nil
+	if selectedId == player.UserId then selectedId = nil end
 	updateList()
 end)
 
@@ -270,36 +442,52 @@ local function makeButton(text, posY, color)
 	btn.Font = Enum.Font.GothamBold
 	btn.TextSize = 14
 	btn.Parent = main
-
 	local c = Instance.new("UICorner")
 	c.CornerRadius = UDim.new(0, 8)
 	c.Parent = btn
 	return btn
 end
 
-local removeSelected = makeButton("Remove Selected", 240, Color3.fromRGB(160, 50, 50))
-local restoreSelected = makeButton("Restore Selected", 280, Color3.fromRGB(50, 120, 70))
-local removeAllBtn = makeButton("Remove All", 320, Color3.fromRGB(120, 40, 40))
-local restoreAllBtn = makeButton("Restore All", 360, Color3.fromRGB(40, 100, 60))
+local actionBtn = makeButton("Remove Selected", 298, Color3.fromRGB(160, 50, 50))
+local removeAllBtn = makeButton("Remove All", 338, Color3.fromRGB(120, 40, 40))
+local restoreAllBtn = makeButton("Restore All", 378, Color3.fromRGB(40, 100, 60))
 
-main.Size = UDim2.new(0, 280, 0, 410)
-
-removeSelected.MouseButton1Click:Connect(function()
-	if selectedPlayer then
-		removePlayer(selectedPlayer)
+local function refreshActionButton()
+	if currentTab == "Players" then
+		actionBtn.Text = "Remove Selected"
+		actionBtn.BackgroundColor3 = Color3.fromRGB(160, 50, 50)
+	else
+		actionBtn.Text = "Restore Selected"
+		actionBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 70)
 	end
-end)
+end
 
-restoreSelected.MouseButton1Click:Connect(function()
-	if selectedPlayer then
-		restorePlayer(selectedPlayer)
+local oldSetTab = setTab
+setTab = function(tab)
+	oldSetTab(tab)
+	refreshActionButton()
+end
+
+actionBtn.MouseButton1Click:Connect(function()
+	if not selectedId then return end
+	if currentTab == "Players" then
+		local player = getPlayerById(selectedId)
+		if player then
+			removePlayer(player)
+			updateList()
+		end
+	else
+		restorePlayer(selectedId)
+		updateList()
 	end
 end)
 
 removeAllBtn.MouseButton1Click:Connect(function()
 	removeAll()
+	updateList()
 end)
 
 restoreAllBtn.MouseButton1Click:Connect(function()
 	restoreAll()
+	updateList()
 end)
