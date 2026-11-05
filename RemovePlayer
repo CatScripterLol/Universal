@@ -1,69 +1,305 @@
 -- this cript only works in client side!!
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
-local StarterGui = game:GetService("StarterGui")
 
-local removed = {}
-local isRemoved = false
+local removedPlayers = {}
+local removedChars = {}
+local selectedPlayer = nil
 
-local function removePlayers()
-	for _, player in ipairs(Players:GetPlayers()) do
-		if player ~= LocalPlayer then
-			removed[player] = true
-			pcall(function()
-				player.Parent = nil
-			end)
-		end
-	end
-	isRemoved = true
+local function getCharacter(player)
+	return player and player.Character
 end
 
-local function restorePlayers()
-	for player in pairs(removed) do
+local function hideCharacter(player)
+	local char = getCharacter(player)
+	if char and char.Parent then
+		removedChars[player] = char
 		pcall(function()
-			player.Parent = Players
+			char.Parent = nil
 		end)
 	end
-	table.clear(removed)
-	isRemoved = false
+end
+
+local function showCharacter(player)
+	local char = removedChars[player]
+	if char then
+		pcall(function()
+			char.Parent = workspace
+		end)
+		removedChars[player] = nil
+	end
+end
+
+local function removePlayer(player)
+	if not player or player == LocalPlayer then return end
+	removedPlayers[player] = true
+	hideCharacter(player)
+	pcall(function()
+		player.Parent = nil
+	end)
+end
+
+local function restorePlayer(player)
+	if not player then return end
+	pcall(function()
+		player.Parent = Players
+	end)
+	showCharacter(player)
+	removedPlayers[player] = nil
+end
+
+local function removeAll()
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			removePlayer(player)
+		end
+	end
+end
+
+local function restoreAll()
+	for player in pairs(removedPlayers) do
+		restorePlayer(player)
+	end
+	table.clear(removedPlayers)
+	table.clear(removedChars)
 end
 
 Players.PlayerAdded:Connect(function(player)
-	if isRemoved and player ~= LocalPlayer then
-		removed[player] = true
-		pcall(function()
-			player.Parent = nil
+	if player == LocalPlayer then return end
+	player.CharacterAdded:Connect(function(char)
+		if removedPlayers[player] then
+			task.wait()
+			hideCharacter(player)
+		end
+	end)
+end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+	if player ~= LocalPlayer then
+		player.CharacterAdded:Connect(function(char)
+			if removedPlayers[player] then
+				task.wait()
+				hideCharacter(player)
+			end
 		end)
 	end
-end)
+end
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "PlayerRemover"
 gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = game:GetService("CoreGui")
 
-local button = Instance.new("TextButton")
-button.Size = UDim2.new(0, 160, 0, 40)
-button.Position = UDim2.new(0.5, -80, 0, 20)
-button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-button.TextColor3 = Color3.fromRGB(255, 255, 255)
-button.Font = Enum.Font.GothamBold
-button.TextSize = 16
-button.Text = "Remove Players"
-button.Parent = gui
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.new(0, 280, 0, 340)
+main.Position = UDim2.new(0.5, -140, 0.5, -170)
+main.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = button
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 10)
+mainCorner.Parent = main
 
-button.MouseButton1Click:Connect(function()
-	if isRemoved then
-		restorePlayers()
-		button.Text = "Remove Players"
-		button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-	else
-		removePlayers()
-		button.Text = "Restore Players"
-		button.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(60, 60, 70)
+mainStroke.Thickness = 1.5
+mainStroke.Parent = main
+
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = main
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 10)
+titleCorner.Parent = titleBar
+
+local titleFix = Instance.new("Frame")
+titleFix.Size = UDim2.new(1, 0, 0, 12)
+titleFix.Position = UDim2.new(0, 0, 1, -12)
+titleFix.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+titleFix.BorderSizePixel = 0
+titleFix.Parent = titleBar
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -40, 1, 0)
+title.Position = UDim2.new(0, 12, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "Player Remover"
+title.TextColor3 = Color3.fromRGB(230, 230, 240)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 15
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -32, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(220, 80, 80)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.Parent = titleBar
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+closeBtn.MouseButton1Click:Connect(function()
+	restoreAll()
+	gui:Destroy()
+end)
+
+local dragging, dragStart, startPos
+
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = main.Position
 	end
+end)
+
+titleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+
+local listFrame = Instance.new("ScrollingFrame")
+listFrame.Name = "PlayerList"
+listFrame.Size = UDim2.new(1, -20, 0, 180)
+listFrame.Position = UDim2.new(0, 10, 0, 48)
+listFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+listFrame.BorderSizePixel = 0
+listFrame.ScrollBarThickness = 4
+listFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 90)
+listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+listFrame.Parent = main
+
+local listCorner = Instance.new("UICorner")
+listCorner.CornerRadius = UDim.new(0, 8)
+listCorner.Parent = listFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.SortOrder = Enum.SortOrder.Name
+listLayout.Padding = UDim.new(0, 4)
+listLayout.Parent = listFrame
+
+local listPad = Instance.new("UIPadding")
+listPad.PaddingTop = UDim.new(0, 6)
+listPad.PaddingLeft = UDim.new(0, 6)
+listPad.PaddingRight = UDim.new(0, 6)
+listPad.Parent = listFrame
+
+local playerButtons = {}
+
+local function updateList()
+	for _, btn in pairs(playerButtons) do
+		btn:Destroy()
+	end
+	table.clear(playerButtons)
+
+	local y = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player == LocalPlayer then continue end
+
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, -4, 0, 32)
+		btn.BackgroundColor3 = (selectedPlayer == player) and Color3.fromRGB(55, 90, 160) or Color3.fromRGB(32, 32, 38)
+		btn.Text = player.DisplayName .. " (@" .. player.Name .. ")"
+		btn.TextColor3 = Color3.fromRGB(220, 220, 230)
+		btn.Font = Enum.Font.Gotham
+		btn.TextSize = 13
+		btn.TextXAlignment = Enum.TextXAlignment.Left
+		btn.Parent = listFrame
+
+		local btnCorner = Instance.new("UICorner")
+		btnCorner.CornerRadius = UDim.new(0, 6)
+		btnCorner.Parent = btn
+
+		local btnPad = Instance.new("UIPadding")
+		btnPad.PaddingLeft = UDim.new(0, 8)
+		btnPad.Parent = btn
+
+		btn.MouseButton1Click:Connect(function()
+			selectedPlayer = player
+			updateList()
+		end)
+
+		playerButtons[player] = btn
+		y = y + 36
+	end
+
+	listFrame.CanvasSize = UDim2.new(0, 0, 0, y + 8)
+end
+
+Players.PlayerAdded:Connect(function()
+	task.wait(0.1)
+	updateList()
+end)
+Players.PlayerRemoving:Connect(function(player)
+	if selectedPlayer == player then selectedPlayer = nil end
+	updateList()
+end)
+
+updateList()
+
+local function makeButton(text, posY, color)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -20, 0, 34)
+	btn.Position = UDim2.new(0, 10, 0, posY)
+	btn.BackgroundColor3 = color
+	btn.Text = text
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 14
+	btn.Parent = main
+
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 8)
+	c.Parent = btn
+	return btn
+end
+
+local removeSelected = makeButton("Remove Selected", 240, Color3.fromRGB(160, 50, 50))
+local restoreSelected = makeButton("Restore Selected", 280, Color3.fromRGB(50, 120, 70))
+local removeAllBtn = makeButton("Remove All", 320, Color3.fromRGB(120, 40, 40))
+local restoreAllBtn = makeButton("Restore All", 360, Color3.fromRGB(40, 100, 60))
+
+main.Size = UDim2.new(0, 280, 0, 410)
+
+removeSelected.MouseButton1Click:Connect(function()
+	if selectedPlayer then
+		removePlayer(selectedPlayer)
+	end
+end)
+
+restoreSelected.MouseButton1Click:Connect(function()
+	if selectedPlayer then
+		restorePlayer(selectedPlayer)
+	end
+end)
+
+removeAllBtn.MouseButton1Click:Connect(function()
+	removeAll()
+end)
+
+restoreAllBtn.MouseButton1Click:Connect(function()
+	restoreAll()
 end)
