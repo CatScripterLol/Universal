@@ -2,36 +2,35 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 
-local hidden = {} -- [UserId] = {player = Player, name = string, display = string, char = Model?}
+local hidden = {} -- [UserId] = {player, name, display}
 local selectedId = nil
 local currentTab = "Players"
+local updateList
 
-local function getPlayerById(id)
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p.UserId == id then return p end
-	end
-	for _, data in pairs(hidden) do
-		if data.player and data.player.UserId == id then return data.player end
-	end
-	return nil
-end
+local hold = Instance.new("Folder")
+hold.Name = "PR_Hold"
+hold.Parent = CoreGui
 
-local function forceHideChar(char)
+local function hideChar(char)
 	if not char then return end
 	pcall(function()
-		char.Parent = nil
+		char.Parent = hold
 	end)
-	for _, part in ipairs(char:GetDescendants()) do
-		if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("Texture") then
-			pcall(function()
-				part.LocalTransparencyModifier = 1
-				part.Transparency = 1
-			end)
+	for _, v in ipairs(char:GetDescendants()) do
+		if v:IsA("BasePart") then
+			pcall(function() v.LocalTransparencyModifier = 1 end)
 		end
-		if part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
-			pcall(function() part.Enabled = false end)
+		if v:IsA("Decal") or v:IsA("Texture") then
+			pcall(function() v.Transparency = 1 end)
+		end
+		if v:IsA("BillboardGui") or v:IsA("SurfaceGui") or v:IsA("Highlight") then
+			pcall(function() v.Enabled = false end)
+		end
+		if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") then
+			pcall(function() v.Enabled = false end)
 		end
 	end
 	local hum = char:FindFirstChildOfClass("Humanoid")
@@ -43,19 +42,20 @@ local function forceHideChar(char)
 	end
 end
 
-local function forceShowChar(char)
+local function showChar(char)
 	if not char then return end
 	pcall(function()
 		char.Parent = workspace
 	end)
-	for _, part in ipairs(char:GetDescendants()) do
-		if part:IsA("BasePart") then
-			pcall(function()
-				part.LocalTransparencyModifier = 0
-			end)
+	for _, v in ipairs(char:GetDescendants()) do
+		if v:IsA("BasePart") then
+			pcall(function() v.LocalTransparencyModifier = 0 end)
 		end
-		if part:IsA("BillboardGui") or part:IsA("SurfaceGui") then
-			pcall(function() part.Enabled = true end)
+		if v:IsA("BillboardGui") or v:IsA("SurfaceGui") or v:IsA("Highlight") then
+			pcall(function() v.Enabled = true end)
+		end
+		if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") then
+			pcall(function() v.Enabled = true end)
 		end
 	end
 	local hum = char:FindFirstChildOfClass("Humanoid")
@@ -70,33 +70,41 @@ end
 local function removePlayer(player)
 	if not player or player == LocalPlayer then return end
 	local id = player.UserId
-	local char = player.Character
+	if hidden[id] then return end
 	hidden[id] = {
 		player = player,
 		name = player.Name,
 		display = player.DisplayName,
-		char = char
 	}
-	pcall(function() player.Parent = nil end)
-	forceHideChar(char)
-	if selectedId == id and currentTab == "Players" then
-		selectedId = nil
-	end
+	pcall(function()
+		player.Parent = nil
+	end)
+	hideChar(player.Character)
+	if selectedId == id then selectedId = nil end
 end
 
 local function restorePlayer(id)
 	local data = hidden[id]
 	if not data then return end
-	local player = data.player
-	pcall(function()
-		if player then player.Parent = Players end
-	end)
-	local char = data.char or (player and player.Character)
-	forceShowChar(char)
+
+	-- remove from hidden FIRST so heartbeat stops fighting
 	hidden[id] = nil
-	if selectedId == id and currentTab == "Hidden" then
-		selectedId = nil
-	end
+	if selectedId == id then selectedId = nil end
+
+	local player = data.player
+	if not player then return end
+
+	pcall(function()
+		player.Parent = Players
+	end)
+
+	-- wait a frame then show character (engine may recreate/reparent)
+	task.defer(function()
+		local char = player.Character
+		if char then
+			showChar(char)
+		end
+	end)
 end
 
 local function removeAll()
@@ -110,14 +118,14 @@ end
 local function restoreAll()
 	local ids = {}
 	for id in pairs(hidden) do
-		table.insert(ids, id)
+		ids[#ids + 1] = id
 	end
 	for _, id in ipairs(ids) do
 		restorePlayer(id)
 	end
 end
 
--- keep forcing hide every frame so engine can't bring them back
+-- enforce hide only while still in hidden table
 RunService.Heartbeat:Connect(function()
 	for id, data in pairs(hidden) do
 		local player = data.player
@@ -125,51 +133,42 @@ RunService.Heartbeat:Connect(function()
 			if player.Parent ~= nil then
 				pcall(function() player.Parent = nil end)
 			end
-			local char = player.Character or data.char
-			if char then
-				data.char = char
-				if char.Parent ~= nil then
-					forceHideChar(char)
-				end
+			local char = player.Character
+			if char and char.Parent ~= hold then
+				hideChar(char)
 			end
 		end
 	end
 end)
 
-Players.PlayerAdded:Connect(function(player)
+local function hookCharacter(player)
 	if player == LocalPlayer then return end
 	player.CharacterAdded:Connect(function(char)
 		if hidden[player.UserId] then
 			task.defer(function()
-				hidden[player.UserId].char = char
-				forceHideChar(char)
+				hideChar(char)
 			end)
 		end
 	end)
-end)
+end
 
-for _, player in ipairs(Players:GetPlayers()) do
-	if player ~= LocalPlayer then
-		player.CharacterAdded:Connect(function(char)
-			if hidden[player.UserId] then
-				task.defer(function()
-					hidden[player.UserId].char = char
-					forceHideChar(char)
-				end)
-			end
-		end)
-	end
+Players.PlayerAdded:Connect(hookCharacter)
+for _, p in ipairs(Players:GetPlayers()) do
+	hookCharacter(p)
 end
 
 -- UI
+if CoreGui:FindFirstChild("PlayerRemover") then
+	CoreGui.PlayerRemover:Destroy()
+end
+
 local gui = Instance.new("ScreenGui")
 gui.Name = "PlayerRemover"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.Parent = game:GetService("CoreGui")
+gui.Parent = CoreGui
 
 local main = Instance.new("Frame")
-main.Name = "Main"
 main.Size = UDim2.new(0, 300, 0, 420)
 main.Position = UDim2.new(0.5, -150, 0.5, -210)
 main.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
@@ -177,25 +176,17 @@ main.BorderSizePixel = 0
 main.Active = true
 main.Parent = gui
 
-local mainCorner = Instance.new("UICorner")
-mainCorner.CornerRadius = UDim.new(0, 10)
-mainCorner.Parent = main
-
-local mainStroke = Instance.new("UIStroke")
-mainStroke.Color = Color3.fromRGB(55, 55, 65)
-mainStroke.Thickness = 1.5
-mainStroke.Parent = main
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+local stroke = Instance.new("UIStroke", main)
+stroke.Color = Color3.fromRGB(55, 55, 65)
+stroke.Thickness = 1.5
 
 local titleBar = Instance.new("Frame")
-titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, 0, 0, 36)
 titleBar.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
 titleBar.BorderSizePixel = 0
 titleBar.Parent = main
-
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 10)
-titleCorner.Parent = titleBar
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
 
 local titleFix = Instance.new("Frame")
 titleFix.Size = UDim2.new(1, 0, 0, 12)
@@ -224,13 +215,11 @@ closeBtn.TextColor3 = Color3.fromRGB(220, 80, 80)
 closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = 14
 closeBtn.Parent = titleBar
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(0, 6)
-closeCorner.Parent = closeBtn
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 
 closeBtn.MouseButton1Click:Connect(function()
 	restoreAll()
+	hold:Destroy()
 	gui:Destroy()
 end)
 
@@ -249,12 +238,11 @@ titleBar.InputEnded:Connect(function(input)
 end)
 UserInputService.InputChanged:Connect(function(input)
 	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-		local delta = input.Position - dragStart
-		main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		local d = input.Position - dragStart
+		main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
 	end
 end)
 
--- Tabs
 local tabBar = Instance.new("Frame")
 tabBar.Size = UDim2.new(1, -20, 0, 32)
 tabBar.Position = UDim2.new(0, 10, 0, 44)
@@ -263,17 +251,13 @@ tabBar.Parent = main
 
 local playersTabBtn = Instance.new("TextButton")
 playersTabBtn.Size = UDim2.new(0.5, -4, 1, 0)
-playersTabBtn.Position = UDim2.new(0, 0, 0, 0)
 playersTabBtn.BackgroundColor3 = Color3.fromRGB(55, 90, 160)
 playersTabBtn.Text = "Players"
 playersTabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 playersTabBtn.Font = Enum.Font.GothamBold
 playersTabBtn.TextSize = 13
 playersTabBtn.Parent = tabBar
-
-local playersTabCorner = Instance.new("UICorner")
-playersTabCorner.CornerRadius = UDim.new(0, 6)
-playersTabCorner.Parent = playersTabBtn
+Instance.new("UICorner", playersTabBtn).CornerRadius = UDim.new(0, 6)
 
 local hiddenTabBtn = Instance.new("TextButton")
 hiddenTabBtn.Size = UDim2.new(0.5, -4, 1, 0)
@@ -284,13 +268,9 @@ hiddenTabBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
 hiddenTabBtn.Font = Enum.Font.GothamBold
 hiddenTabBtn.TextSize = 13
 hiddenTabBtn.Parent = tabBar
-
-local hiddenTabCorner = Instance.new("UICorner")
-hiddenTabCorner.CornerRadius = UDim.new(0, 6)
-hiddenTabCorner.Parent = hiddenTabBtn
+Instance.new("UICorner", hiddenTabBtn).CornerRadius = UDim.new(0, 6)
 
 local listFrame = Instance.new("ScrollingFrame")
-listFrame.Name = "List"
 listFrame.Size = UDim2.new(1, -20, 0, 200)
 listFrame.Position = UDim2.new(0, 10, 0, 84)
 listFrame.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
@@ -299,10 +279,7 @@ listFrame.ScrollBarThickness = 4
 listFrame.ScrollBarImageColor3 = Color3.fromRGB(70, 70, 80)
 listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 listFrame.Parent = main
-
-local listCorner = Instance.new("UICorner")
-listCorner.CornerRadius = UDim.new(0, 8)
-listCorner.Parent = listFrame
+Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0, 8)
 
 local listLayout = Instance.new("UIListLayout")
 listLayout.SortOrder = Enum.SortOrder.Name
@@ -317,27 +294,35 @@ listPad.Parent = listFrame
 
 local listButtons = {}
 
-local function clearList()
-	for _, btn in pairs(listButtons) do
-		btn:Destroy()
-	end
-	table.clear(listButtons)
-end
-
 local function countHidden()
 	local n = 0
-	for _ in pairs(hidden) do n = n + 1 end
+	for _ in pairs(hidden) do n += 1 end
 	return n
 end
 
-local function updateList()
-	clearList()
-	local y = 0
+local actionBtn
 
+local function refreshActionButton()
+	if not actionBtn then return end
+	if currentTab == "Players" then
+		actionBtn.Text = "Remove Selected"
+		actionBtn.BackgroundColor3 = Color3.fromRGB(160, 50, 50)
+	else
+		actionBtn.Text = "Restore Selected"
+		actionBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 70)
+	end
+end
+
+updateList = function()
+	for _, b in pairs(listButtons) do
+		b:Destroy()
+	end
+	table.clear(listButtons)
+
+	local y = 0
 	if currentTab == "Players" then
 		for _, player in ipairs(Players:GetPlayers()) do
-			if player == LocalPlayer then continue end
-			if hidden[player.UserId] then continue end
+			if player == LocalPlayer or hidden[player.UserId] then continue end
 
 			local btn = Instance.new("TextButton")
 			btn.Size = UDim2.new(1, -4, 0, 32)
@@ -348,23 +333,17 @@ local function updateList()
 			btn.TextSize = 13
 			btn.TextXAlignment = Enum.TextXAlignment.Left
 			btn.Parent = listFrame
-
-			local c = Instance.new("UICorner")
-			c.CornerRadius = UDim.new(0, 6)
-			c.Parent = btn
-
-			local p = Instance.new("UIPadding")
-			p.PaddingLeft = UDim.new(0, 8)
-			p.Parent = btn
+			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+			local pad = Instance.new("UIPadding", btn)
+			pad.PaddingLeft = UDim.new(0, 8)
 
 			local id = player.UserId
 			btn.MouseButton1Click:Connect(function()
 				selectedId = id
 				updateList()
 			end)
-
 			listButtons[id] = btn
-			y = y + 36
+			y += 36
 		end
 	else
 		for id, data in pairs(hidden) do
@@ -377,27 +356,22 @@ local function updateList()
 			btn.TextSize = 13
 			btn.TextXAlignment = Enum.TextXAlignment.Left
 			btn.Parent = listFrame
-
-			local c = Instance.new("UICorner")
-			c.CornerRadius = UDim.new(0, 6)
-			c.Parent = btn
-
-			local p = Instance.new("UIPadding")
-			p.PaddingLeft = UDim.new(0, 8)
-			p.Parent = btn
+			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+			local pad = Instance.new("UIPadding", btn)
+			pad.PaddingLeft = UDim.new(0, 8)
 
 			btn.MouseButton1Click:Connect(function()
 				selectedId = id
 				updateList()
 			end)
-
 			listButtons[id] = btn
-			y = y + 36
+			y += 36
 		end
 	end
 
 	listFrame.CanvasSize = UDim2.new(0, 0, 0, y + 8)
 	hiddenTabBtn.Text = "Hidden (" .. countHidden() .. ")"
+	refreshActionButton()
 end
 
 local function setTab(tab)
@@ -430,8 +404,6 @@ Players.PlayerRemoving:Connect(function(player)
 	updateList()
 end)
 
-updateList()
-
 local function makeButton(text, posY, color)
 	local btn = Instance.new("TextButton")
 	btn.Size = UDim2.new(1, -20, 0, 34)
@@ -442,44 +414,33 @@ local function makeButton(text, posY, color)
 	btn.Font = Enum.Font.GothamBold
 	btn.TextSize = 14
 	btn.Parent = main
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 8)
-	c.Parent = btn
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 	return btn
 end
 
-local actionBtn = makeButton("Remove Selected", 298, Color3.fromRGB(160, 50, 50))
+actionBtn = makeButton("Remove Selected", 298, Color3.fromRGB(160, 50, 50))
 local removeAllBtn = makeButton("Remove All", 338, Color3.fromRGB(120, 40, 40))
 local restoreAllBtn = makeButton("Restore All", 378, Color3.fromRGB(40, 100, 60))
-
-local function refreshActionButton()
-	if currentTab == "Players" then
-		actionBtn.Text = "Remove Selected"
-		actionBtn.BackgroundColor3 = Color3.fromRGB(160, 50, 50)
-	else
-		actionBtn.Text = "Restore Selected"
-		actionBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 70)
-	end
-end
-
-local oldSetTab = setTab
-setTab = function(tab)
-	oldSetTab(tab)
-	refreshActionButton()
-end
 
 actionBtn.MouseButton1Click:Connect(function()
 	if not selectedId then return end
 	if currentTab == "Players" then
-		local player = getPlayerById(selectedId)
+		local player = Players:GetPlayerByUserId(selectedId)
+		if not player then
+			for _, data in pairs(hidden) do
+				if data.player and data.player.UserId == selectedId then
+					player = data.player
+					break
+				end
+			end
+		end
 		if player then
 			removePlayer(player)
-			updateList()
 		end
 	else
 		restorePlayer(selectedId)
-		updateList()
 	end
+	updateList()
 end)
 
 removeAllBtn.MouseButton1Click:Connect(function()
@@ -491,3 +452,5 @@ restoreAllBtn.MouseButton1Click:Connect(function()
 	restoreAll()
 	updateList()
 end)
+
+updateList()
